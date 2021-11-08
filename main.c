@@ -35,13 +35,13 @@ char *map_file(char *filename, open_file *file) {
     return buf;
 }
 
-void check_superblock(struct os_superblock_t *sb) {
+void check_superblock(struct superblock *sb) {
     if (sb->s_magic != EXT2_SUPER_MAGIC) {
         printf("Superblock magic error: found %x", sb->s_magic);
     }
 }
 
-void print_superblock(struct os_superblock_t *sb) {
+void print_superblock(struct superblock *sb) {
     printf("-----------------------Superblock info -------------------------");
     printf("s_blocks_count=%d\n", sb->s_blocks_count);
     printf("s_free_blocks_count=%d\n", sb->s_free_blocks_count);
@@ -51,12 +51,12 @@ void print_superblock(struct os_superblock_t *sb) {
     printf("-----------------------Superblock info end ----------------------");
 }
 
-struct os_superblock_t *read_superblock(open_file *file) {
+struct superblock *read_superblock(open_file *file) {
     if (file->size < 2048) {
         printf("File size not enough: %ld", file->size);
         abort();
     }
-    struct os_superblock_t *sb = (file->buf + 1024);
+    struct superblock *sb = (file->buf + 1024);
     check_superblock(sb);
 #ifdef DEBUG
     print_superblock(sb);
@@ -64,8 +64,8 @@ struct os_superblock_t *read_superblock(open_file *file) {
     return sb;
 }
 
-struct os_fs_metadata_t *read_metadata(open_file *file, struct os_superblock_t *sb) {
-    struct os_fs_metadata_t *metadata = calloc(1, sizeof(struct os_fs_metadata_t));
+struct fs_metadata *read_metadata(open_file *file, struct superblock *sb) {
+    struct fs_metadata *metadata = calloc(1, sizeof(struct fs_metadata));
     if (metadata == NULL) {
         perror("malloc: ");
         abort();
@@ -81,9 +81,9 @@ struct os_fs_metadata_t *read_metadata(open_file *file, struct os_superblock_t *
     metadata->num_blockgroups = (metadata->num_blocks - sb->s_first_data_block) / metadata->blockgroup_size;
     uint32_t remainder = (metadata->num_blocks - sb->s_first_data_block) % metadata->blockgroup_size;
     uint32_t num_descriptortable_blocks = ((metadata->num_blockgroups + (remainder == 0 ? 0 : 1)) *
-        sizeof(struct os_blockgroup_descriptor_t)) / metadata->block_size;
+        sizeof(struct blockgroup_descriptor)) / metadata->block_size;
     uint32_t ndb_remainder = ((metadata->num_blockgroups + (remainder == 0 ? 0 : 1)) *
-        sizeof(struct os_blockgroup_descriptor_t)) % metadata->block_size;
+        sizeof(struct blockgroup_descriptor)) % metadata->block_size;
     if (ndb_remainder > 0) {
         num_descriptortable_blocks += 1;
     }
@@ -94,7 +94,7 @@ struct os_fs_metadata_t *read_metadata(open_file *file, struct os_superblock_t *
 
     metadata->num_blocks_per_desc_table = num_descriptortable_blocks;
     metadata->offsets = malloc(metadata->num_blockgroups *
-        sizeof(struct os_blockgroup_offsets_t));
+        sizeof(struct blockgroup));
     if (metadata->offsets == NULL) {
         perror("malloc: ");
         abort();
@@ -110,16 +110,16 @@ struct os_fs_metadata_t *read_metadata(open_file *file, struct os_superblock_t *
     return metadata;
 }
 
-struct os_blockgroup_descriptor_t *read_bgdt(open_file *file,
-                                             struct os_fs_metadata_t *metadata) {
-    struct os_blockgroup_descriptor_t *bgd_table = file->buf + 1024 + 1024;
+struct blockgroup_descriptor *read_bgdt(open_file *file,
+                                        struct fs_metadata *metadata) {
+    struct blockgroup_descriptor *bgd_table = file->buf + 1024 + 1024;
 
     metadata->bgdt = bgd_table;
     return bgd_table;
 }
 
-struct os_inode_t *fetch_inode(uint32_t inode_number, open_file *file,
-                               struct os_fs_metadata_t *metadata) {
+struct inode *fetch_inode(uint32_t inode_number, open_file *file,
+                          struct fs_metadata *metadata) {
     uint32_t blockgroup_num = (inode_number - 1) / metadata->inodes_per_group;
     uint32_t offset_within_blockgroup = (inode_number - 1) % metadata->inodes_per_group;
 
@@ -127,13 +127,13 @@ struct os_inode_t *fetch_inode(uint32_t inode_number, open_file *file,
         printf("Couldn't get inode with number %d", inode_number);
         return NULL;
     }
-    uint32_t num_inodes_per_block = metadata->block_size / sizeof(struct os_inode_t);
+    uint32_t num_inodes_per_block = metadata->block_size / sizeof(struct inode);
 
     uint32_t inode_block_num = offset_within_blockgroup / num_inodes_per_block;
     inode_block_num += metadata->bgdt[blockgroup_num].bg_inode_table;
     uint32_t offset_in_block = offset_within_blockgroup % num_inodes_per_block;
     uint32_t block_n = inode_block_num * metadata->block_size;
-    return file->buf + block_n + (offset_in_block * sizeof(struct os_inode_t));
+    return file->buf + block_n + (offset_in_block * sizeof(struct inode));
 }
 
 void calculate_offsets(uint32_t blocknum,
@@ -177,8 +177,8 @@ void calculate_offsets(uint32_t blocknum,
     abort();
 }
 
-uint32_t file_blockread(struct os_inode_t file_inode, open_file *file,
-                        struct os_fs_metadata_t *metadata,
+uint32_t file_blockread(struct inode file_inode, open_file *file,
+                        struct fs_metadata *metadata,
                         uint32_t blocknum, unsigned char *buffer) {
     char range_in_hole = 0;
     if (blocknum * metadata->block_size >= file_inode.i_size) {
@@ -253,9 +253,9 @@ uint32_t file_blockread(struct os_inode_t file_inode, open_file *file,
 }
 
 char file_read(open_file *file, int file_inode_num,
-               struct os_fs_metadata_t *metadata,
+               struct fs_metadata *metadata,
                unsigned char **buffer) {
-    struct os_inode_t *inode = fetch_inode(file_inode_num, file, metadata);
+    struct inode *inode = fetch_inode(file_inode_num, file, metadata);
     if (!(inode->i_mode & (EXT2_S_IFREG | EXT2_S_IFDIR))) {
         printf("Wrong inode type=%d\n", inode->i_mode);
         return 0;
@@ -296,10 +296,10 @@ int main(int argc, char** argv) {
     }
     open_file file = {0};
     map_file(argv[1], &file);
-    struct os_superblock_t sb = {0};
+    struct superblock sb = {0};
     read_superblock(&file);
-    struct os_fs_metadata_t* metadata = read_metadata(&file, &sb);
-    struct os_blockgroup_descriptor_t* bgdt = read_bgdt(&file, metadata);
+    struct fs_metadata* metadata = read_metadata(&file, &sb);
+    struct blockgroup_descriptor* bgdt = read_bgdt(&file, metadata);
     uint8_t *buffer = 0;
     if (file_read(&file, block_idx, metadata, &buffer)) {
         printf("File red - %s", buffer);

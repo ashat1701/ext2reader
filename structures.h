@@ -42,7 +42,7 @@
 #define EXT2_BZIP2_ALG 0x00000008
 #define EXT2_LZO_ALG 0x00000010
 
-struct os_superblock_t {
+struct superblock {
   uint32_t s_inodes_count;
 
   uint32_t s_blocks_count;
@@ -138,12 +138,12 @@ struct os_superblock_t {
   uint8_t s_unused[760];
 };
 
-struct os_blockgroup_offsets_t {
+struct blockgroup {
   uint32_t first_block_in_blockgroup;
   uint32_t last_block_in_blockgroup;
 };
 
-struct os_fs_metadata_t {
+struct fs_metadata {
   uint32_t disk_size;
   uint32_t block_size;
   uint32_t num_blocks;
@@ -153,14 +153,14 @@ struct os_fs_metadata_t {
   uint32_t num_blockgroups;
   uint32_t num_blocks_per_desc_table;
 
-  struct os_blockgroup_offsets_t *offsets;
+  struct blockgroup *offsets;
 
-  struct os_superblock_t *sb;
+  struct superblock *sb;
 
-  struct os_blockgroup_descriptor_t *bgdt;
+  struct blockgroup_descriptor *bgdt;
 };
 
-struct os_blockgroup_descriptor_t {
+struct blockgroup_descriptor {
   uint32_t bg_block_bitmap;
 
   uint32_t bg_inode_bitmap;
@@ -178,7 +178,7 @@ struct os_blockgroup_descriptor_t {
   uint8_t bg_reserved[12];
 };
 
-struct os_inode_t {
+struct inode {
   uint16_t i_mode;
 
   uint16_t i_uid;
