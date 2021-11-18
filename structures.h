@@ -4,6 +4,7 @@
 
 #ifndef EXT2READER__STRUCTURES_H_
 #define EXT2READER__STRUCTURES_H_
+#include <inttypes.h>
 
 #define EXT2_SUPER_MAGIC 0xEF53
 #define EXT2_VALID_FS 1
@@ -269,11 +270,17 @@ struct inode {
 #define EXT2_S_IWOTH  0x0002
 #define EXT2_S_IXOTH  0x0001
 
+struct fs_inode_blocks_iter {
+  struct inode* s_ino;
+  int cur_block;
+};
+
 struct open_file {
   char *buf;
-  size_t size;
+  uint64_t size;
 };
 
 typedef struct open_file open_file;
+
 
 #endif //EXT2READER__STRUCTURES_H_
