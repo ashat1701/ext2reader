@@ -270,6 +270,21 @@ struct inode {
 #define EXT2_S_IWOTH  0x0002
 #define EXT2_S_IXOTH  0x0001
 
+#define EXT2_NAME_LEN 256
+#define EXT2_FT_UNKNOWN   0  //  Unknown File Type
+#define EXT2_FT_REG_FILE  1  //  Regular File
+#define EXT2_FT_DIR       2  //  Directory File
+
+#define EXT2_ROOT_INO 2
+
+struct direntry_t {
+  uint32_t inode;
+  uint16_t rec_len;
+  uint8_t name_len;
+  uint8_t file_type;
+  uint8_t file_name[EXT2_NAME_LEN];
+};
+
 struct fs_inode_blocks_iter {
   struct inode* s_ino;
   int cur_block;

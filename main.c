@@ -183,8 +183,8 @@ void calculate_offsets(uint32_t blocknum,
     if (blocks_left < (blocksize / 4) * (blocksize / 4) * (blocksize / 4)) {
         *direct_num = -1;
         *triple_index = blocks_left / (blocksize / 4) / (blocksize / 4);
-        *double_index = blocks_left - (*triple_index) * (blocksize / 4) * (blocksize / 4);
-        *indirect_index = blocks_left % ((*double_index) * (blocksize / 4);
+        *double_index = (blocks_left - (*triple_index) * (blocksize / 4) * (blocksize / 4)) / (blocksize / 4);
+        *indirect_index = (blocks_left - (*triple_index) * (blocksize / 4) * (blocksize / 4)) - (*double_index) * (blocksize / 4);
         return;
     }
     printf("BlockNum incorrect\n");
@@ -300,30 +300,181 @@ char file_read(open_file *file, int file_inode_num,
     return 1;
 }
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        printf("Usage: ./reader <filename> <index>\n");
+char pop_next_dir(char *path,
+                       char **next_component) {
+    if ((path == NULL) || (*path == '\0'))
+        return 0;
+    if (strcmp(path, "/") == 0)
+        return 0;
+    if (*path != '/')
+        return 0;
+
+    uint32_t len = strlen(path);
+
+    char *next_slash = strchr(path + 1, '/');
+
+    if (next_slash == NULL) {
+        *next_component = (char *) calloc(len, 1);
+        if (*next_component == NULL)
+            return 0;
+        strcpy(*next_component, path+1);
+        *path = '\0';
         return 1;
     }
-    int block_idx = 0;
-    char* end_ptr;
-    block_idx = strtol(argv[2], &end_ptr, 10);
-    if (errno != 0 || end_ptr == argv[2]) {
-        perror("strtol: ");
+
+    *next_component = (char *) calloc(next_slash - path, 1);
+    *next_slash = '\0';
+    strcpy(*next_component, path + 1);
+    *next_slash = '/';
+
+    for (int i = 0; i < len - ((int) (next_slash - path)) + 1; i++) {
+        path[i] = path[i + (int) (next_slash - path)];
+    }
+
+    if (strcmp(path, "/") == 0)
+        *path = '\0';
+    return 1;
+}
+
+uint32_t scan_dir(unsigned char *directory_block,
+                  uint32_t directory_length,
+                  char *filename) {
+    struct direntry_t current_entry;
+    uint32_t current_offset = 0;
+
+    if (strlen((char *) filename) == 0)
+        return 0;
+
+    memcpy(&current_entry, directory_block, sizeof(current_entry));
+
+    while (current_offset < directory_length) {
+        char cur_filename[EXT2_NAME_LEN] = {0};
+        memcpy(cur_filename, current_entry.file_name, current_entry.name_len);
+        cur_filename[current_entry.name_len] = '\0';
+        if (current_entry.inode != 0) {
+#ifdef DEBUG
+            printf("File found: %s", cur_filename);
+#endif
+            if (strcmp(filename, cur_filename) == 0) {
+                return current_entry.inode;
+            }
+        } else {
+            current_offset += sizeof(current_entry);
+            memcpy(&current_entry, directory_block, sizeof(current_entry));
+            continue;
+        }
+        current_offset += current_entry.rec_len;
+        memcpy(&current_entry, directory_block + current_offset, sizeof(current_entry));
+    }
+    return 0;
+}
+
+char path_read(char *path, open_file* file,
+               struct fs_metadata *metadata) {
+    if (strcmp(path, "") == 0)
+        return 0;
+
+    char *tmp_path = malloc(strlen(path) + 1);
+    assert(tmp_path != NULL);
+    strcpy(tmp_path, path);
+
+    int32_t inode_num = EXT2_ROOT_INO;
+
+    uint8_t* buffer = calloc(metadata->block_size, 1);
+    if (!buffer) {
+        perror("Buffer calloc: ");
+        return 0;
+    }
+
+    while(1) {
+        char res;
+        struct inode inode;
+        char *next_component = NULL;
+        res = pop_next_dir(tmp_path, &next_component);
+        if (res == 0) {
+            if (!file_read(file, inode_num, metadata)) {
+                printf("File read error!\n");
+                free(tmp_path);
+                free(buffer);
+                return 0;
+            }
+            free(tmp_path);
+            return 1;
+        }
+        struct fs_inode_blocks_iter iter = {0};
+        iter.s_ino = &inode;
+        int read_size = 0;
+        while ((read_size = inode_blocks_iter_next(metadata, file, &iter, buffer)) != -1) {
+            inode_num = scan_dir(buffer, read_size, next_component);
+            if (inode_num != 0) {
+                break;
+            }
+        }
+        if (inode_num == 0) {
+            printf("File/Dir not found: %s\n", next_component);
+            free(next_component);
+            free(buffer);
+            free(tmp_path);
+            return 0;
+        }
+        free(next_component);
+        free(buffer);
+    }
+}
+
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        printf("Usage: ./reader [-i <inode_num>] [-n <path_to_file>] <image_filename> \n");
+        return 1;
+    }
+    int inode_num = 0;
+    char* path = NULL;
+    int c = 0;
+    while ((c = getopt(argc, argv, "i:n:"))) {
+        switch (c) {
+            case 'i': inode_num = strtol(optarg, NULL, 10); break;
+            case 'n': path = strdup(optarg); break;
+            case '?':
+                if (optopt == 'i' || optopt == 'f') {
+                    printf("Option -%c required argument\n", optopt);
+                    return 1;
+                } else {
+                    printf("Unknown option: %c", optopt);
+                    return 1;
+                }
+        }
+    }
+    if (!path && !inode_num) {
+        printf("Usage: ./reader [-i <inode_num>] [-n <path_to_file>] <image_filename> \n");
         return 1;
     }
     open_file file = {0};
-    map_file(argv[1], &file);
+    map_file(argv[optind], &file);
     struct superblock sb = {0};
     read_superblock(&file);
     struct fs_metadata* metadata = read_metadata(&file, &sb);
     struct blockgroup_descriptor* bgdt = read_bgdt(&file, metadata);
-    if (file_read(&file, block_idx, metadata)) {
-    } else {
-        printf("File read error\n");
-        return 1;
-    }
+    if (path) {
+        if (path_read(path, &file, metadata) == 0) {
+            printf("Path read failed\n");
+            close_file(&file);
+            delete_metadata(metadata);
+            free(path);
+            return 1;
+        }
+    } else
+        if (file_read(&file, inode_num, metadata)) {
+        } else {
+            printf("File read error\n");
+            close_file(&file);
+            delete_metadata(metadata);
+            free(path);
+            return 1;
+        }
+
     close_file(&file);
     delete_metadata(metadata);
+    free(path);
     return 0;
 }
